@@ -1,0 +1,11 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    # Don't raise PRs for releases younger than this many days. Dodges a
+    # freshly-poisoned version that gets yanked within hours or days.
+    # gomod honours default-days only.
+    cooldown:
+      default-days: 7
