@@ -36,7 +36,8 @@ except `main.go`, `scan.go` and the two platform-specific limits files.
 | `scan.go` | The syft calls and settings; lists installed debs from syft's result |
 | `redact.go` | Removes free-text fields from syft's package metadata |
 | `sockets.go` | Listening sockets and the processes holding them, from `/proc` |
-| `project.go` | What a listening process is: unit, working directory, project manifest, git remote |
+| `project.go` | What a listening process is: unit, working directory, project manifest or marker file, git remote |
+| `app.go` | Which jar or project folder of a listening process joins the walk, and why one does not |
 | `apt.go` | What apt's list files say about each installed deb's origin |
 | `extra.go` | Assembles the agent's own section and merges it into syft's JSON |
 | `limits.go`, `limits_linux.go`, `limits_other.go` | Lowering its own priority and watching its own memory |
@@ -45,12 +46,16 @@ except `main.go`, `scan.go` and the two platform-specific limits files.
 
 1. Parse flags. Lower CPU and disk priority, volunteer as the first
    process to kill if memory runs out, start the memory and time watches.
-2. Read `/proc/self/mountinfo` and plan the scope (`planScope`).
+2. Read `/proc/self/mountinfo`. Collect the listening sockets and their
+   processes (`collectListeners`, `/proc` only), then plan the scope
+   (`planScope`) from the default paths plus each listener's app path
+   (`appPathsToWalk`), and note on each process whose app path is not
+   walked why (`noteAppScope`).
 3. Run ONE syft scan rooted at `/`, with exclude patterns that keep it to
    the planned paths (`scan`).
 4. Encode as syft-json and strip free-text metadata (`stripFreeText`).
 5. Collect the agent's own facts (`collectExtra`): running kernel, uptime,
-   listeners, apt facts. A part that fails is recorded under `problems`
+   apt facts, and the listeners from step 2. A part that fails is recorded under `problems`
    and the rest still goes out.
 6. Add the `patchAgent` key and write the file with mode 0600.
 
@@ -72,7 +77,22 @@ standard error.
 
 - `defaultScanPaths`: distro identification files, `/var/lib/dpkg`,
   `/var/lib/rpm`, `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/opt`,
-  `/srv`, `/export`. Home directories are not walked.
+  `/srv`, `/export`. Home directories are not walked, apart from a
+  listening app's own folder (below).
+- App paths (`app.go`): for each listening process, the `.jar` or `.war`
+  it was started with, or else its project folder when a manifest or
+  marker file was found there (`manifestNames` and `markerNames` in
+  `project.go`). A folder found only from a git checkout is not walked.
+  An app path is only walked when the host's path is the very file or
+  folder the process sees, so an app inside a container is not, and never
+  when it is `/`, `/root`, `/home` or `/home/<name>` (by name only; homes
+  elsewhere are not caught). App paths outside the default paths share one
+  allowance of 100,000 files (`appFileAllowance`): each folder is counted
+  by reading directory entries only, stopping once past the allowance,
+  then the smallest are walked first and any that no longer fit are
+  skipped with the reason in `appSkipped`. A folder on a filesystem the walk
+  refuses is never counted. Then each app path goes through the same
+  allowlist and file budget as any wanted path.
 - `localFSTypes`: an allowlist (ext2/3/4, xfs, btrfs, zfs, f2fs,
   bcachefs). Anything else, including NFS, autofs and tmpfs, is skipped
   and reported.
@@ -109,6 +129,7 @@ patchAgent
 │       ├─ pid, exe, exeDeleted, exeIsHostFile, sha256
 │       ├─ unit, cwd, fileArgument
 │       ├─ project { dir, manifest, name, version, gitRemote, gitCommit }
+│       ├─ appPath, appSkipped          what was catalogued for the app, or why not
 │       └─ problem
 ├─ apt                                 absent where there is no apt
 │   ├─ listsUpdated
@@ -123,7 +144,9 @@ Field meanings are documented on the structs in `sockets.go`,
 ## Rules the Code Keeps
 
 - **Read only.** Nothing is executed and nothing is written except the
-  output file. Sockets, processes and mounts all come from `/proc`.
+  output file and syft's own scratch copies: syft copies each jar it reads
+  into a temporary folder under `TMPDIR` (default `/tmp`) and deletes it
+  after reading (see issue `pa-gbHJd`). Sockets, processes and mounts all come from `/proc`.
 - **No free text.** No README or description is collected, and syft's
   `description`, `summary`, `title` and `comments` fields are stripped.
   Command lines are never reported; only the first argument that is an
@@ -172,8 +195,9 @@ sudo systemd-run --scope -q -p MemoryMax=2G -p MemorySwapMax=0 \
 
 Posting to a central service, enrolment and identity, a config file to
 add or skip paths, scanning a very large software area in pieces, home
-directories, the contents of containers, the app folder
-and loaded libraries of listening processes, packaging and signing, stage
+directories, the contents of containers (including a container
+app's own folder), loaded libraries of listening processes, Julia (syft
+has no cataloger for it), packaging and signing, stage
 two (applying fixes).
 
 ## Where the Reasoning Lives

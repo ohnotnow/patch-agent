@@ -41,8 +41,9 @@ type scopeReport struct {
 }
 
 // collectExtra gathers the agent's own facts. A part that fails is recorded
-// in Problems and the rest is still reported.
-func collectExtra(procRoot, hostRoot string, sc scope, debs []installedDeb, now time.Time) extra {
+// in Problems and the rest is still reported. The listening sockets are
+// collected before the scan, because their app folders join the walk.
+func collectExtra(procRoot, hostRoot string, sc scope, listeners []listener, listenErr error, debs []installedDeb, now time.Time) extra {
 	x := extra{
 		AgentVersion: Version,
 		SyftVersion:  syftVersion(),
@@ -67,8 +68,8 @@ func collectExtra(procRoot, hostRoot string, sc scope, debs []installedDeb, now 
 		x.UptimeSeconds = uptime
 	}
 
-	if listeners, err := collectListeners(procRoot, hostRoot); err != nil {
-		problem("listening sockets", err)
+	if listenErr != nil {
+		problem("listening sockets", listenErr)
 	} else if listeners != nil {
 		x.Listeners = listeners
 	}

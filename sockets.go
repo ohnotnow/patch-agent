@@ -50,7 +50,14 @@ type process struct {
 	Cwd     string   `json:"cwd,omitempty"`
 	FileArg string   `json:"fileArgument,omitempty"`
 	Project *project `json:"project,omitempty"`
-	Problem string   `json:"problem,omitempty"`
+	// AppPath is the host path catalogued for the process's own code: the
+	// jar it runs, or its project folder. Artifacts whose locations are at
+	// or under it belong to this process; syft writes those locations
+	// without the leading "/" (as "srv/app/..."). AppSkipped says why it was not
+	// walked; it can be set with no AppPath, for an app inside a container.
+	AppPath    string `json:"appPath,omitempty"`
+	AppSkipped string `json:"appSkipped,omitempty"`
+	Problem    string `json:"problem,omitempty"`
 }
 
 type socketEntry struct {
@@ -250,6 +257,7 @@ func newProcessDescriber(procRoot, hostRoot string) func(pid int) process {
 
 		ctx := describeContext(procRoot, pid)
 		p.Unit, p.Cwd, p.FileArg, p.Project = ctx.Unit, ctx.Cwd, ctx.FileArg, ctx.Project
+		p.AppPath, p.AppSkipped = appTarget(procRoot, hostRoot, pid, ctx)
 
 		exe, err := os.Readlink(filepath.Join(dir, "exe"))
 		if err != nil {

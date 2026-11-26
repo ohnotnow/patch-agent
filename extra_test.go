@@ -26,7 +26,8 @@ func TestCollectExtra(t *testing.T) {
 			"1/fd/3->":             "socket:[7]",
 			"1/net/tcp":            "   0: 00000000:0016 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 7 1 0 100 0 0 10 0\n",
 		})
-		x := collectExtra(proc, "/", sc, nil, now)
+		listeners, err := collectListeners(proc, "/")
+		x := collectExtra(proc, "/", sc, listeners, err, nil, now)
 
 		if x.RunningKernel != "7.0.0-43-generic" {
 			t.Errorf("RunningKernel = %q", x.RunningKernel)
@@ -50,7 +51,8 @@ func TestCollectExtra(t *testing.T) {
 
 	t.Run("a part that cannot be read becomes a problem, not a failure", func(t *testing.T) {
 		proc := fakeProc(t, map[string]string{"uptime": "12.5 20.0\n"})
-		x := collectExtra(proc, "/", sc, nil, now)
+		listeners, err := collectListeners(proc, "/")
+		x := collectExtra(proc, "/", sc, listeners, err, nil, now)
 
 		if x.UptimeSeconds != 12 {
 			t.Errorf("UptimeSeconds = %d, want 12 (the readable part is still reported)", x.UptimeSeconds)

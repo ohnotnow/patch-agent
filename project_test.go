@@ -122,6 +122,42 @@ func TestFindProject(t *testing.T) {
 		}
 	})
 
+	t.Run("a marker file marks the folder, with no name", func(t *testing.T) {
+		root := openRoot(t, processRoot(t, map[string]string{
+			"srv/flask/requirements.txt": "flask==3.0.0\n",
+			"srv/flask/app/server.py":    "",
+		}))
+		got := findProject(root, "/srv/flask/app")
+		want := project{Dir: "/srv/flask", Manifest: "requirements.txt"}
+		if got == nil || *got != want {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("a manifest with a name wins over a marker in the same folder", func(t *testing.T) {
+		root := openRoot(t, processRoot(t, map[string]string{
+			"srv/api/pom.xml":      "<project/>",
+			"srv/api/package.json": `{"name":"api-docs","version":"1.0.0"}`,
+		}))
+		got := findProject(root, "/srv/api")
+		if got == nil || got.Manifest != "package.json" || got.Name != "api-docs" {
+			t.Errorf("got %+v, want the package.json", got)
+		}
+	})
+
+	t.Run("a symlink or folder at a marker's name is not a marker", func(t *testing.T) {
+		root := openRoot(t, processRoot(t, map[string]string{
+			"srv/a/real.txt":           "",
+			"srv/a/requirements.txt->": "real.txt",
+			"srv/b/Gemfile/inside":     "",
+		}))
+		for _, dir := range []string{"/srv/a", "/srv/b"} {
+			if got := findProject(root, dir); got != nil {
+				t.Errorf("%s: got %+v, want nothing", dir, got)
+			}
+		}
+	})
+
 	t.Run("detached HEAD", func(t *testing.T) {
 		root := openRoot(t, processRoot(t, map[string]string{
 			"opt/tool/.git/config": "[core]\n",

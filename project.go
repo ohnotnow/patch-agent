@@ -21,8 +21,8 @@ import (
 // free-text is collected (no README, no description), because a researcher's
 // own words can name people or restricted work.
 type project struct {
-	Dir       string `json:"dir"` // as the process sees it
-	Manifest  string `json:"manifest,omitempty"`
+	Dir       string `json:"dir"`                // as the process sees it
+	Manifest  string `json:"manifest,omitempty"` // a manifest or a marker file; a marker gives no name or version
 	Name      string `json:"name,omitempty"`
 	Version   string `json:"version,omitempty"`
 	GitRemote string `json:"gitRemote,omitempty"`
@@ -45,6 +45,19 @@ const (
 )
 
 var manifestNames = []string{"pyproject.toml", "package.json", "composer.json", "go.mod", "Cargo.toml"}
+
+// markerNames mark an app's folder but carry no name worth reading. They
+// are only looked at, never read. A folder with a manifest or a marker is
+// walked so that syft catalogues what is in it (installed packages and
+// lockfiles); syft need not read the marker itself. Only ecosystems syft
+// can catalogue belong here.
+var markerNames = []string{
+	"requirements.txt",         // Python
+	"Gemfile",                  // Ruby
+	"renv.lock", "DESCRIPTION", // R
+	"stack.yaml", "cabal.project", // Haskell
+	"pom.xml", "build.gradle", "build.gradle.kts", // Java
+}
 
 // describeContext reads a process's unit, working directory and first file
 // argument from /proc, then makes a few small reads of fixed file names near
@@ -157,6 +170,15 @@ func findProject(root *os.Root, dir string) *project {
 				}
 			}
 		}
+		if p.Manifest == "" {
+			for _, name := range markerNames {
+				if isRegularFile(root, path.Join(dir, name)) {
+					p.Dir, p.Manifest = dir, name
+					found = true
+					break
+				}
+			}
+		}
 		if config, ok := readSmallFile(root, path.Join(dir, ".git/config")); ok {
 			if !found {
 				p.Dir = dir
@@ -171,6 +193,13 @@ func findProject(root *os.Root, dir string) *project {
 		return nil
 	}
 	return &p
+}
+
+// isRegularFile reports whether name is a regular file, not following a
+// symlink at that name.
+func isRegularFile(root *os.Root, name string) bool {
+	info, err := root.Lstat(inRoot(name))
+	return err == nil && info.Mode().IsRegular()
 }
 
 // readSmallFile reads up to projectFileLimit bytes of a regular file. It

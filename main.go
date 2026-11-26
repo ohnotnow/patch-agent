@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"time"
 )
 
@@ -73,10 +74,15 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if budget.Limit == 0 {
 		budget.Limit = budgetFor(*maxMemoryMB)
 	}
-	sc, err := planScope("/", defaultScanPaths, mounts, budget)
+	// Listening sockets first: only /proc is read, and each listener's app
+	// folder or jar joins the walk.
+	listeners, listenErr := collectListeners("/proc", "/")
+	limitAppPaths(listeners, resolvedPaths(defaultScanPaths), mounts, appFileAllowance, countFiles)
+	sc, err := planScope("/", slices.Concat(defaultScanPaths, appPathsToWalk(listeners)), mounts, budget)
 	if err != nil {
 		return err
 	}
+	noteAppScope(listeners, sc)
 	for _, p := range sc.Walk {
 		fmt.Fprintln(stderr, "walk:", p)
 	}
@@ -84,6 +90,15 @@ func run(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintf(stderr, "skip: %s (%s)\n", s.Path, s.Reason)
 	}
 	fmt.Fprintf(stderr, "excluded from the walk: %d paths\n", len(sc.Excludes)/2) // two patterns per path
+	var reported []string
+	for _, l := range listeners {
+		for _, p := range l.Processes {
+			if p.AppPath != "" && p.AppSkipped != "" && !slices.Contains(reported, p.AppPath) {
+				reported = append(reported, p.AppPath)
+				fmt.Fprintf(stderr, "app not walked: %s (%s)\n", p.AppPath, p.AppSkipped)
+			}
+		}
+	}
 
 	start := time.Now()
 	inventory, err := scan(context.Background(), sc)
@@ -102,7 +117,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("remove free text: %w", err)
 	}
 
-	x := collectExtra("/proc", "/", sc, installedDebs(inventory), time.Now())
+	x := collectExtra("/proc", "/", sc, listeners, listenErr, installedDebs(inventory), time.Now())
 	x.Problems = append(x.Problems, limitProblems...)
 	x.RunSeconds = int64(time.Since(start).Seconds())
 	x.PeakMemoryKB = peakMemoryKB()
